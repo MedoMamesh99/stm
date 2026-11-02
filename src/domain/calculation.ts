@@ -57,7 +57,7 @@ export function calculate(
   rateDate: string | null,
   fetchedAt: string,
   source: Calculation['source'],
-  provider = 'CxRates',
+  provider = 'exchangerate.dev',
   rateTimestamp: string | null = null,
 ): Calculation {
   const priceError = validatePrice(price);

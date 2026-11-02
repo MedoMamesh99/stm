@@ -151,7 +151,7 @@ export default function App() {
   }
   const cached = rate?.source === 'cache' || rate?.source === 'offline';
   const cacheForRetry = failedCalculation ? readCachedRate(currency) : null;
-  const currentProvider = rate?.provider ?? (currency === 'EGP' ? 'Local' : 'CxRates');
+  const currentProvider = rate?.provider ?? (currency === 'EGP' ? 'Local' : 'exchangerate.dev');
   return <div className="site-shell">
     <header className="site-header"><div className="brand-lockup">
       <img src={asset} alt={l('logoAlt')} className="brand-logo" />
@@ -210,7 +210,7 @@ export default function App() {
               {cacheForRetry && <button type="button" className="cached-calculate-button"
                 onClick={() => void performCalculation(true)}>{l('calculateCached')}</button>}
               <p className="rate-note">{currentProvider === 'Local' ? l('identityNote') : <>
-                {l('cxRatesNote')} <a href="https://cxrates.com/" target="_blank" rel="noreferrer">CxRates</a>
+                {l('exchangeRateDevNote')} <a href="https://exchangerate.dev/" target="_blank" rel="noreferrer">exchangerate.dev</a>
               </>}</p></div>
             <button type="submit" className="calculate-button" disabled={loading || calculating}>
               {l(calculating ? 'calculating' : 'calculate')} <ArrowUpRight size={20} /></button>
@@ -260,6 +260,6 @@ export default function App() {
     </main>
     <footer className="site-footer"><span>© {new Date().getFullYear()} STM · {l('footerBrand')}</span>
       {rate && rate.provider !== 'Local' && <span>{l('footerRates')} <a
-        href="https://cxrates.com/" target="_blank" rel="noreferrer">CxRates</a></span>}</footer>
+        href="https://exchangerate.dev/" target="_blank" rel="noreferrer">exchangerate.dev</a></span>}</footer>
   </div>;
 }

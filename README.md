@@ -19,19 +19,19 @@ The optional browser QA script is `scripts/browser-qa.mjs`. Run the preview serv
 
 ## Exchange rates
 
-STM uses [CxRates](https://cxrates.com/api) exclusively through its documented, keyless endpoint:
+STM uses [exchangerate.dev](https://exchangerate.dev/docs/api-reference) exclusively through its documented keyless endpoint:
 
 ```text
-GET https://cxrates.com/api/v1/rates?base={BASE}&quote=EGP
+GET https://api.exchangerate.dev/v1/latest/{BASE}?symbols=EGP
 ```
 
-For example, SAR uses `/api/v1/rates?base=SAR&quote=EGP`. The rate comes from `rates.EGP.value`. STM validates the response base, positive rate, provider feed retrieval timestamp in `fetched_at`, and the pair's source and stale flag. Only `open_er_api` and `cross:open_er_api+open_er_api` sources are accepted; this prevents the CxRates aggregator from switching STM to a Frankfurter-backed quote. Stale quotes are rejected. CxRates' `fetched_at` is when its feed fetched the rate, **not** the underlying market observation time. The Exchange Rate section shows only Provider, Updated (the browser retrieval time), and Pair. [Provider attribution](https://cxrates.com/) is linked next to the rate. CxRates describes its values as indicative mid-market references, not executable trading quotes. See [provider evaluation](docs/FX_PROVIDER_REVIEW.md) for live verification and limitations.
+For example, SAR uses `/v1/latest/SAR?symbols=EGP`. The rate comes from `rates.EGP`. STM validates the response base, positive rate, and pair observation time in `effective_at.EGP`. The Exchange Rate section shows only Provider, Updated (the browser retrieval time), and Pair. Provider freshness metadata remains in the saved rate for calculation and cache integrity. The [free plan](https://exchangerate.dev/free-plan-limits) can provide delayed indicative data, so STM does not present it as a real-time trading quote. Attribution is linked next to the rate. No API credential is placed in browser code.
 
 Every valid **Calculate Final Price** click for a foreign currency makes a new `cache: 'no-store'` request. There are no STM time, weekday, or cache freshness gates. EGP uses an exact identity rate of 1 locally. A successful response replaces the saved rate and metadata for that specific pair; old provider cache entries are ignored.
 
-On HTTP 429, STM reads any browser-exposed `Retry-After`, `X-RateLimit-Reset`, `X-RateLimit-Scope`, and `X-RateLimit-Remaining` headers. A valid provider-supplied future reset is saved across page loads and prevents requests until it passes. STM does not infer a reset from a missing header. If a saved CxRates rate for the selected pair exists, calculation continues automatically with a prominent warning showing the saved rate, retrieval time, and known reset. Without a matching saved rate, calculation is blocked. Ordinary network failures continue to offer the explicit **Calculate Using Cached Rate** action. Neither case calls another provider.
+On HTTP 429, STM reads the provider error code and browser-exposed `Retry-After`, `X-RateLimit-Reset`, `X-RateLimit-Scope`, and `X-RateLimit-Remaining` headers. It recognizes minute, IP/hour, and account quota codes. A valid provider-supplied future reset is saved across page loads and prevents requests until it passes. A reset is never estimated from an IP restriction or missing header. If a saved rate for the selected pair exists, calculation continues automatically with a prominent warning showing the saved rate, retrieval time, and known reset. Without a matching saved rate, calculation is blocked. Ordinary network failures continue to offer the explicit **Calculate Using Cached Rate** action. Neither case calls another provider.
 
-CxRates documents no account, key, or request quota, asks for linked attribution where the rate appears, and prohibits resale of upstream data. STM makes a new HTTP request on each Calculate click; the provider may serve an unchanged quote until its feed updates.
+The keyless plan is subject to [provider limits](https://exchangerate.dev/free-plan-limits), including anonymous per-IP limits. If higher volume is needed, review the provider's current plan and display rights before adding credentials. A credentialed integration would need a server-side proxy; public Vite variables and GitHub Pages assets are unsuitable for secrets.
 
 Supported codes: EGP, USD, EUR, GBP, SAR, AED, KWD, QAR, BHD, OMR, JPY, CNY, TRY, CHF, CAD, AUD.
 
