@@ -45,8 +45,7 @@ function LimitWarning({ limit, rate, language }: {
     <p>{l(rate ? 'rateLimitBody' : 'rateLimitNoCache')}</p>
     {rate && <div className="limit-details">
       <span>{l('cachedRate')}: <bdi dir="ltr">1 {rate.code} = {formatRate(rate.value)} EGP</bdi></span>
-      <span>{l('providerUpdated')}: {dateText(rate.rateTimestamp, language)}</span>
-      <span>{l('fetched')}: {dateText(rate.fetchedAt, language)}</span>
+      <span>{l('updated')}: {dateText(rate.fetchedAt, language)}</span>
       <span>{l('savedRateAge')}: {ageDays} {l('days')}, {ageHours} {l('hours')}, {ageMins} {l('minutes')}</span>
     </div>}
     <p>{limit.resetAt && remaining !== null && remaining > 0
@@ -201,16 +200,8 @@ export default function App() {
                 ? <bdi dir="ltr">1 {currency} = {formatRate(rate.value)} EGP</bdi> : l('rateUnavailable')}</div>
               {rate && <div className="rate-meta">
                 <span>{l('provider')}: {providerLabel(language, rate.provider)}</span>
-                <span>{l('pair')}: <bdi dir="ltr">{rate.pair}</bdi></span>
-                <span>{l('rateStatus')}: {l(rate.source === 'network' ? 'fresh' : rate.source === 'identity' ? 'identity' : rate.source === 'cache' ? 'cached' : 'offline')}</span>
-                {rate.rateTimestamp && <span>{l('providerUpdated')}: {dateText(rate.rateTimestamp, language)}</span>}
-                {rate.responseTimestamp && <span>{l('responseTime')}: {dateText(rate.responseTimestamp, language)}</span>}
-                {rate.dataUpdatedAt && <span>{l('dataUpdatedAt')}: {dateText(rate.dataUpdatedAt, language)}</span>}
-                {rate.source !== 'identity' && <span>{l('fetched')}: {dateText(rate.fetchedAt, language)}</span>}
-                {rate.marketSession && <span>{l('marketSession')}: {rate.marketSession}</span>}
-                {rate.quoteSource && <span>{l('quoteSource')}: {rate.quoteSource}</span>}
-                {rate.delaySeconds !== null && <span>{l('providerDelay')}: {rate.delaySeconds} {l('seconds')}</span>}
-                {rate.stale !== null && <span>{l('providerStale')}: {l(rate.stale ? 'yes' : 'no')}</span>}</div>}
+                <span>{l('updated')}: {dateText(rate.fetchedAt, language)}</span>
+                <span>{l('pair')}: <bdi dir="ltr">{rate.pair}</bdi></span></div>}
               {cached && !rateLimit && <p className="cache-warning" role="status">
                 {l(rate?.source === 'offline' ? 'unavailableSavedRate' : 'savedRate')} {l('verifyRate')}</p>}
               {rateLimit && <LimitWarning limit={rateLimit} rate={rate} language={language} />}
@@ -241,11 +232,7 @@ export default function App() {
               <Row label={l('convertedCost')}><bdi dir="ltr">EGP {formatExactMoney(result.converted)}</bdi></Row>
               <Row label={l('profitMarkup')}><bdi dir="ltr">{result.profitPercent}%</bdi></Row>
               <Row label={l('profitAmount')}><bdi dir="ltr">EGP {formatExactMoney(result.profitAmount)}</bdi></Row>
-              <Row label={l('unroundedTotal')}><bdi dir="ltr">EGP {formatExactMoney(result.unroundedFinalPrice ?? result.finalPrice)}</bdi></Row>
-              <Row label={l('rounding')}>{l('nearestFive')}</Row>
-              <Row label={l('provider')}>{providerLabel(language, result.provider ?? 'exchangerate.dev')}</Row>
-              <Row label={l('providerRateDate')}>{dateText(result.rateTimestamp ?? result.rateDate, language)}</Row>
-              <Row label={l('fetched')}>{dateText(result.fetchedAt, language)}</Row></div>
+              <Row label={l('unroundedTotal')}><bdi dir="ltr">EGP {formatExactMoney(result.unroundedFinalPrice ?? result.finalPrice)}</bdi></Row></div>
             {result.finalPrice === '0' && <p className="result-warning">{l('zeroRounded')}</p>}
             {(result.source === 'offline' || result.source === 'cache') &&
               <p className="result-warning">{l('calculatedSavedRate')} {dateText(result.fetchedAt, language)}.</p>}
