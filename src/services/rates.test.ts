@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getExchangeRate, parseFrankfurterResponse, parseProxyResponse, readCachedRate } from './rates';
+import { createMorningstarSource, getExchangeRate, parseFrankfurterResponse, parseProxyResponse,
+  readCachedRate, selectRateSource } from './rates';
 
 const response = { date: '2026-11-02', base: 'USD', quote: 'EGP', rate: 50.1234 };
 
@@ -22,6 +23,44 @@ describe('exchange rate service', () => {
     expect(() => parseProxyResponse(payload, 'SAR', 'Twelve Data')).toThrow();
     expect(() => parseProxyResponse({ ...payload, pair: 'USD/EGP' }, 'SAR', 'Morningstar')).toThrow();
     expect(() => parseProxyResponse({ ...payload, rateTimestamp: 'bad' }, 'SAR', 'Morningstar')).toThrow();
+  });
+  it('never falls back when Morningstar is selected without a secure proxy', () => {
+    expect(() => selectRateSource('Morningstar')).toThrowError('providerUnavailable');
+    expect(() => selectRateSource('Morningstar', 'https://proxy.example/rate?api_key=secret'))
+      .toThrowError('proxyConfiguration');
+    expect(() => selectRateSource('Morningstar', 'http://proxy.example/rate'))
+      .toThrowError('proxyConfiguration');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('shows an unconfigured Morningstar selection without fetching Frankfurter', async () => {
+    vi.stubEnv('VITE_FX_PROVIDER', 'Morningstar');
+    vi.resetModules();
+    try {
+      const selectedService = await import('./rates');
+      expect(selectedService.activeProviderName()).toBe('Morningstar');
+      await expect(selectedService.getExchangeRate('SAR', { force: true,
+        allowCachedFallback: false })).rejects.toMatchObject({ key: 'providerUnavailable' });
+      expect((await selectedService.getExchangeRate('EGP')).source).toBe('identity');
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+  it('uses the Morningstar adapter contract with a fresh proxy request and source timestamps', async () => {
+    const payload = { provider: 'Morningstar', pair: 'SAR/EGP', rate: '12.345678',
+      rateTimestamp: '2026-11-02T12:34:56Z' };
+    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => payload } as Response);
+    const source = createMorningstarSource('https://rates.example/quote');
+    expect(source.provider).toBe('Morningstar');
+    const rate = await source.fetch('SAR', new AbortController().signal);
+    expect(fetch).toHaveBeenCalledWith(new URL('https://rates.example/quote?code=SAR'),
+      expect.objectContaining({ cache: 'no-store', headers: { Accept: 'application/json' } }));
+    expect(rate).toMatchObject({ provider: 'Morningstar', pair: 'SAR/EGP', value: '12.345678',
+      rateTimestamp: '2026-11-02T12:34:56Z', source: 'network' });
+    expect(Number.isFinite(Date.parse(rate.fetchedAt))).toBe(true);
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ ...payload, pair: 'USD/EGP' }) } as Response);
+    await expect(source.fetch('SAR', new AbortController().signal)).rejects.toMatchObject({ key: 'rateInvalid' });
   });
   it('skips the network for EGP', async () => {
     expect((await getExchangeRate('EGP')).value).toBe('1');

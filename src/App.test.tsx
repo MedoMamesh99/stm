@@ -106,6 +106,8 @@ it('switches currency and uses the EGP identity rate without another request', a
   await user.type(within(dialog).getByRole('searchbox'), 'Egyptian');
   await user.click(within(dialog).getByRole('button', { name: /EGP Egyptian Pound/i }));
   await waitFor(() => expect(screen.getByText('1 EGP = 1.0000 EGP')).toBeInTheDocument());
+  expect(screen.getByText('EGP converts to itself at exactly 1. No rate provider is contacted.')).toBeInTheDocument();
+  expect(within(screen.getByRole('contentinfo')).queryByText('Frankfurter')).not.toBeInTheDocument();
   await user.type(screen.getByLabelText('Unit Price'), '100');
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
   await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('100.00'));

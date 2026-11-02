@@ -22,6 +22,8 @@ const en = {
   frankfurterNote: 'Daily reference rate from Frankfurter. This is not a live bank quote.',
   twelveNote: 'Market quote from Twelve Data. Updates depend on the provider and your subscription.',
   morningstarNote: 'Licensed Morningstar quote. Update timing depends on the contracted feed.',
+  morningstarPending: 'Morningstar rates are selected but have not been connected.',
+  identityNote: 'EGP converts to itself at exactly 1. No rate provider is contacted.',
   retry: 'Retry', calculate: 'Calculate Final Price', calculating: 'Fetching latest rate…',
   calculateCached: 'Calculate Using Cached Rate', reset: 'Reset fields',
   estimateKicker: 'YOUR ESTIMATE', breakdownTitle: 'Price breakdown', finalUnitPrice: 'FINAL UNIT PRICE',
@@ -51,6 +53,7 @@ const en = {
   rateServiceError: 'Could not retrieve the exchange rate.',
   rateCancelled: 'Rate request cancelled.', unsupportedCurrency: 'Unsupported currency.',
   proxyConfiguration: 'Exchange-rate service is not configured correctly.',
+  providerUnavailable: 'The selected rate provider is unavailable because its secure proxy is not configured.',
   calculationFailed: 'Calculation failed. Please retry.',
 } as const;
 
@@ -78,6 +81,8 @@ const ar: Record<MessageKey, string> = {
   frankfurterNote: 'سعر مرجعي يومي من فرانكفورتر، وليس سعر تداول لحظيًا لدى البنوك.',
   twelveNote: 'سعر سوق من تويلف داتا. توقيت التحديث يعتمد على المزود والاشتراك.',
   morningstarNote: 'سعر من خدمة مورنينغ ستار المرخّصة. توقيت التحديث يعتمد على الخدمة المتعاقد عليها.',
+  morningstarPending: 'تم اختيار مورنينغ ستار، لكن خدمة أسعارها لم تُربط بعد.',
+  identityNote: 'تحويل الجنيه المصري إلى نفسه يساوي 1 دون الاتصال بمزود أسعار.',
   retry: 'إعادة المحاولة', calculate: 'احسب السعر النهائي', calculating: 'جاري جلب أحدث سعر…',
   calculateCached: 'احسب بالسعر المحفوظ', reset: 'إعادة تعيين',
   estimateKicker: 'نتيجة التسعير', breakdownTitle: 'تفاصيل السعر', finalUnitPrice: 'سعر الوحدة النهائي',
@@ -107,6 +112,7 @@ const ar: Record<MessageKey, string> = {
   rateServiceError: 'تعذّر جلب سعر الصرف.',
   rateCancelled: 'أُلغِي طلب سعر الصرف.', unsupportedCurrency: 'العملة غير مدعومة.',
   proxyConfiguration: 'خدمة أسعار الصرف غير مضبوطة بصورة صحيحة.',
+  providerUnavailable: 'مزود سعر الصرف المحدد غير متاح لأن الخدمة الوسيطة الآمنة لم تُضبط.',
   calculationFailed: 'تعذّر الحساب. حاول مرة أخرى.',
 };
 

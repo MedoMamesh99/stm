@@ -166,7 +166,9 @@ export default function App() {
                 onClick={failedCalculation ? () => void performCalculation() : refreshRate}>{l('retry')}</button></p>}
               {cacheForRetry && <button type="button" className="cached-calculate-button"
                 onClick={() => void performCalculation(true)}>{l('calculateCached')}</button>}
-              <p className="rate-note">{l(currentProvider === 'Morningstar' ? 'morningstarNote' :
+              <p className="rate-note">{l(currentProvider === 'Local' ? 'identityNote' :
+                currentProvider === 'Morningstar' && !rate ? 'morningstarPending' :
+                currentProvider === 'Morningstar' ? 'morningstarNote' :
                 currentProvider === 'Twelve Data' ? 'twelveNote' : 'frankfurterNote')}</p></div>
             <button type="submit" className="calculate-button" disabled={loading || calculating}>
               {l(calculating ? 'calculating' : 'calculate')} <ArrowUpRight size={20} /></button>
@@ -216,8 +218,9 @@ export default function App() {
           </div>)}</div>}</section>
     </main>
     <footer className="site-footer"><span>© {new Date().getFullYear()} STM · {l('footerBrand')}</span>
-      <span>{l('footerRates')} <a href={currentProvider === 'Morningstar' ? 'https://www.morningstar.com/' :
-        currentProvider === 'Twelve Data' ? 'https://twelvedata.com/' : 'https://frankfurter.dev/'}
-        target="_blank" rel="noreferrer">{providerLabel(language, currentProvider)}</a></span></footer>
+      {rate && rate.provider !== 'Local' && <span>{l('footerRates')} <a
+        href={rate.provider === 'Morningstar' ? 'https://www.morningstar.com/' :
+          rate.provider === 'Twelve Data' ? 'https://twelvedata.com/' : 'https://frankfurter.dev/'}
+        target="_blank" rel="noreferrer">{providerLabel(language, rate.provider)}</a></span>}</footer>
   </div>;
 }
