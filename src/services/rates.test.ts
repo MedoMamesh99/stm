@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getExchangeRate, parseFrankfurterResponse, readCachedRate } from './rates';
+import { getExchangeRate, parseFrankfurterResponse, parseProxyResponse, readCachedRate } from './rates';
 
 const response = { date: '2026-11-02', base: 'USD', quote: 'EGP', rate: 50.1234 };
 
@@ -11,6 +11,17 @@ describe('exchange rate service', () => {
     expect(rate.rateDate).toBe('2026-11-02');
     expect(() => parseFrankfurterResponse({ ...response, quote: 'EUR' }, 'USD')).toThrow();
     expect(() => parseFrankfurterResponse({ ...response, rate: -1 }, 'USD')).toThrow();
+  });
+  it('accepts a normalized licensed-provider response only for the configured provider and pair', () => {
+    const payload = { provider: 'Morningstar', pair: 'SAR/EGP', rate: '12.345678',
+      rateTimestamp: '2026-11-02T12:34:56Z' };
+    const rate = parseProxyResponse(payload, 'SAR', 'Morningstar');
+    expect(rate.provider).toBe('Morningstar');
+    expect(rate.value).toBe('12.345678');
+    expect(rate.rateTimestamp).toBe('2026-11-02T12:34:56Z');
+    expect(() => parseProxyResponse(payload, 'SAR', 'Twelve Data')).toThrow();
+    expect(() => parseProxyResponse({ ...payload, pair: 'USD/EGP' }, 'SAR', 'Morningstar')).toThrow();
+    expect(() => parseProxyResponse({ ...payload, rateTimestamp: 'bad' }, 'SAR', 'Morningstar')).toThrow();
   });
   it('skips the network for EGP', async () => {
     expect((await getExchangeRate('EGP')).value).toBe('1');

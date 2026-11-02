@@ -110,11 +110,17 @@ export default function App() {
   return <div className="site-shell">
     <header className="site-header"><div className="brand-lockup">
       <img src={asset} alt={l('logoAlt')} className="brand-logo" />
-      <div><div className="brand-title">STM<span className="brand-dot">.</span></div><div className="brand-subtitle">{l('subtitle')}</div></div>
-    </div><button type="button" className="theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-      aria-label={l(theme === 'light' ? 'switchDark' : 'switchLight')}>
-      {theme === 'light' ? <Moon size={19} /> : <Sun size={19} />}
-      <span>{l(theme === 'light' ? 'themeDark' : 'themeLight')}</span></button></header>
+      <div className="brand-copy"><div className="brand-title">STM</div><div className="brand-subtitle">{l('subtitle')}</div></div>
+    </div><div className="header-actions">
+      <div className="header-language" role="group" aria-label="Language / اللغة">
+        <button type="button" lang="en" aria-label="English" aria-pressed={language === 'en'} onClick={() => setLanguage('en')}>EN</button>
+        <button type="button" lang="ar" aria-label="العربية" aria-pressed={language === 'ar'} onClick={() => setLanguage('ar')}>AR</button>
+      </div>
+      <button type="button" className="theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+        aria-label={l(theme === 'light' ? 'switchDark' : 'switchLight')}
+        title={l(theme === 'light' ? 'switchDark' : 'switchLight')}>
+        {theme === 'light' ? <Moon size={19} /> : <Sun size={19} />}</button>
+    </div></header>
     <main className="main-wrap">
       <div className="intro"><div className="eyebrow"><span className="eyebrow-line" /> {l('eyebrow')}</div>
         <h1>{l('heroBefore')} <em>{l('heroAccent')}</em><br />{l('heroAfter')}</h1><p>{l('heroDescription')}</p></div>
@@ -160,7 +166,8 @@ export default function App() {
                 onClick={failedCalculation ? () => void performCalculation() : refreshRate}>{l('retry')}</button></p>}
               {cacheForRetry && <button type="button" className="cached-calculate-button"
                 onClick={() => void performCalculation(true)}>{l('calculateCached')}</button>}
-              <p className="rate-note">{l(currentProvider === 'Twelve Data' ? 'twelveNote' : 'frankfurterNote')}</p></div>
+              <p className="rate-note">{l(currentProvider === 'Morningstar' ? 'morningstarNote' :
+                currentProvider === 'Twelve Data' ? 'twelveNote' : 'frankfurterNote')}</p></div>
             <button type="submit" className="calculate-button" disabled={loading || calculating}>
               {l(calculating ? 'calculating' : 'calculate')} <ArrowUpRight size={20} /></button>
             <button type="button" className="reset-button" onClick={reset} disabled={calculating}>
@@ -209,10 +216,8 @@ export default function App() {
           </div>)}</div>}</section>
     </main>
     <footer className="site-footer"><span>© {new Date().getFullYear()} STM · {l('footerBrand')}</span>
-      <div className="footer-language" role="group" aria-label="Language / اللغة">
-        <button type="button" lang="en" aria-pressed={language === 'en'} onClick={() => setLanguage('en')}>English</button>
-        <button type="button" lang="ar" aria-pressed={language === 'ar'} onClick={() => setLanguage('ar')}>العربية</button></div>
-      <span>{l('footerRates')} <a href={currentProvider === 'Twelve Data' ? 'https://twelvedata.com/' : 'https://frankfurter.dev/'}
+      <span>{l('footerRates')} <a href={currentProvider === 'Morningstar' ? 'https://www.morningstar.com/' :
+        currentProvider === 'Twelve Data' ? 'https://twelvedata.com/' : 'https://frankfurter.dev/'}
         target="_blank" rel="noreferrer">{providerLabel(language, currentProvider)}</a></span></footer>
   </div>;
 }

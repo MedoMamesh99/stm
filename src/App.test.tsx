@@ -16,10 +16,35 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 
+it('keeps one compact language selector and an accessible icon-only theme control in the header', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  const header = screen.getByRole('banner');
+  expect(header.querySelector('.brand-title')).toHaveTextContent(/^STM$/);
+  expect(header.querySelector('.brand-dot')).toBeNull();
+  expect(within(header).getByRole('group', { name: 'Language / اللغة' })).toBeInTheDocument();
+  expect(within(screen.getByRole('contentinfo')).queryByRole('group', { name: 'Language / اللغة' })).toBeNull();
+  expect(within(header).getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true');
+  expect(within(header).getByRole('button', { name: 'العربية' })).toHaveAttribute('aria-pressed', 'false');
+  const theme = within(header).getByRole('button', { name: 'Switch to dark mode' });
+  expect(theme).toHaveAttribute('title', 'Switch to dark mode');
+  expect(theme).toHaveTextContent('');
+  expect(theme.querySelector('svg')).toBeInTheDocument();
+  await user.click(theme);
+  expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+  expect(within(header).getByRole('button', { name: 'Switch to light mode' }))
+    .toHaveAttribute('title', 'Switch to light mode');
+  await user.click(within(header).getByRole('button', { name: 'العربية' }));
+  expect(within(header).getByRole('button', { name: 'التبديل إلى الوضع الفاتح' })).toBeInTheDocument();
+  expect(header.querySelector('.brand-title')).toHaveTextContent(/^STM$/);
+});
+
 it('starts with SAR and fetches a fresh rate for every calculation', async () => {
   const user = userEvent.setup();
   render(<App />);
   await waitFor(() => expect(screen.getByText('1 SAR = 12.0000 EGP')).toBeInTheDocument());
+  expect(screen.getByText(/Provider: Frankfurter/)).toBeInTheDocument();
+  expect(screen.getByText(/Status: Latest retrieved/)).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
   expect(screen.getByText('Enter a valid unit price.')).toBeInTheDocument();

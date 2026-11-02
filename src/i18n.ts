@@ -15,12 +15,13 @@ const en = {
   exchangeRateKicker: 'EXCHANGE RATE', refresh: 'Refresh', refreshRate: 'Refresh exchange rate',
   loadingRate: 'Loading rate…', rateUnavailable: 'Rate unavailable',
   provider: 'Provider', pair: 'Pair', rateDate: 'Rate date', providerUpdated: 'Provider updated',
-  fetched: 'Fetched', rateStatus: 'Status', fresh: 'Fresh response', cached: 'Saved rate',
+  fetched: 'Fetched', rateStatus: 'Status', fresh: 'Latest retrieved', cached: 'Saved rate',
   offline: 'Offline rate', identity: 'Fixed EGP rate',
   savedRate: 'Using a locally saved rate.', unavailableSavedRate: 'Service unavailable. Showing a saved rate.',
   verifyRate: 'Verify its timestamp before pricing.',
   frankfurterNote: 'Daily reference rate from Frankfurter. This is not a live bank quote.',
   twelveNote: 'Market quote from Twelve Data. Updates depend on the provider and your subscription.',
+  morningstarNote: 'Licensed Morningstar quote. Update timing depends on the contracted feed.',
   retry: 'Retry', calculate: 'Calculate Final Price', calculating: 'Fetching latest rate…',
   calculateCached: 'Calculate Using Cached Rate', reset: 'Reset fields',
   estimateKicker: 'YOUR ESTIMATE', breakdownTitle: 'Price breakdown', finalUnitPrice: 'FINAL UNIT PRICE',
@@ -70,12 +71,13 @@ const ar: Record<MessageKey, string> = {
   exchangeRateKicker: 'سعر الصرف', refresh: 'تحديث', refreshRate: 'تحديث سعر الصرف',
   loadingRate: 'جاري تحميل السعر…', rateUnavailable: 'سعر الصرف غير متاح',
   provider: 'مزود السعر', pair: 'زوج العملات', rateDate: 'تاريخ السعر', providerUpdated: 'آخر تحديث لدى المزود',
-  fetched: 'وقت الجلب', rateStatus: 'الحالة', fresh: 'استجابة جديدة', cached: 'سعر محفوظ',
+  fetched: 'وقت الجلب', rateStatus: 'الحالة', fresh: 'آخر سعر تم جلبه', cached: 'سعر محفوظ',
   offline: 'سعر محفوظ دون اتصال', identity: 'سعر ثابت للجنيه',
   savedRate: 'يظهر سعر محفوظ على الجهاز.', unavailableSavedRate: 'الخدمة غير متاحة؛ يظهر سعر محفوظ.',
   verifyRate: 'راجع وقت السعر قبل التسعير.',
   frankfurterNote: 'سعر مرجعي يومي من فرانكفورتر، وليس سعر تداول لحظيًا لدى البنوك.',
   twelveNote: 'سعر سوق من تويلف داتا. توقيت التحديث يعتمد على المزود والاشتراك.',
+  morningstarNote: 'سعر من خدمة مورنينغ ستار المرخّصة. توقيت التحديث يعتمد على الخدمة المتعاقد عليها.',
   retry: 'إعادة المحاولة', calculate: 'احسب السعر النهائي', calculating: 'جاري جلب أحدث سعر…',
   calculateCached: 'احسب بالسعر المحفوظ', reset: 'إعادة تعيين',
   estimateKicker: 'نتيجة التسعير', breakdownTitle: 'تفاصيل السعر', finalUnitPrice: 'سعر الوحدة النهائي',
@@ -116,5 +118,6 @@ export function providerLabel(language: Language, provider: string): string {
   if (language === 'en') return provider;
   if (provider === 'Frankfurter') return 'فرانكفورتر';
   if (provider === 'Twelve Data') return 'تويلف داتا';
+  if (provider === 'Morningstar') return 'مورنينغ ستار';
   return provider;
 }

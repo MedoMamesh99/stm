@@ -7,7 +7,7 @@ export type ExchangeRate = {
   pair: string;
   code: CurrencyCode;
   value: string;
-  provider: 'Frankfurter' | 'Twelve Data' | 'Local';
+  provider: 'Frankfurter' | 'Twelve Data' | 'Morningstar' | 'Local';
   rateDate: string | null;
   rateTimestamp: string | null;
   fetchedAt: string;
@@ -55,26 +55,31 @@ export function parseFrankfurterResponse(payload: unknown, code: CurrencyCode): 
     rateDate: data.date, rateTimestamp: null, fetchedAt: new Date().toISOString(), source: 'network' };
 }
 
-export function parseProxyResponse(payload: unknown, code: CurrencyCode): ExchangeRate {
+export function parseProxyResponse(payload: unknown, code: CurrencyCode,
+  expectedProvider: 'Twelve Data' | 'Morningstar' = 'Twelve Data'): ExchangeRate {
   if (!payload || typeof payload !== 'object') throw new RateError('rateInvalid');
   const data = payload as Record<string, unknown>;
-  if (data.provider !== 'Twelve Data' || data.pair !== `${code}/EGP` ||
+  if (data.provider !== expectedProvider || data.pair !== `${code}/EGP` ||
       !validTimestamp(data.rateTimestamp)) throw new RateError('rateInvalid');
-  return { pair: `${code}/EGP`, code, value: positiveRate(data.rate), provider: 'Twelve Data',
+  return { pair: `${code}/EGP`, code, value: positiveRate(data.rate), provider: expectedProvider,
     rateDate: data.rateTimestamp.slice(0, 10), rateTimestamp: data.rateTimestamp,
     fetchedAt: new Date().toISOString(), source: 'network' };
 }
 
 const proxyUrl = import.meta.env.VITE_FX_PROXY_URL?.trim() ?? '';
+const configuredProxyProvider = import.meta.env.VITE_FX_PROXY_PROVIDER?.trim() || 'Twelve Data';
 function activeSource(): ExchangeRateSource {
   if (!proxyUrl) return frankfurterSource;
   try {
+    if (configuredProxyProvider !== 'Twelve Data' && configuredProxyProvider !== 'Morningstar') {
+      throw new Error('Invalid provider');
+    }
     const url = new URL(proxyUrl);
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && url.hostname === 'localhost')) {
       throw new Error('Invalid protocol');
     }
     return {
-      provider: 'Twelve Data',
+      provider: configuredProxyProvider,
       async fetch(code, signal) {
         const requestUrl = new URL(url);
         requestUrl.searchParams.set('code', code);
@@ -82,7 +87,7 @@ function activeSource(): ExchangeRateSource {
           headers: { Accept: 'application/json' } });
         if (response.status === 429) throw new RateError('rateBusy');
         if (!response.ok) throw new RateError('rateServiceError');
-        return parseProxyResponse(await response.json(), code);
+        return parseProxyResponse(await response.json(), code, configuredProxyProvider);
       },
     };
   } catch { throw new RateError('proxyConfiguration'); }
@@ -140,7 +145,7 @@ export async function getExchangeRate(
     rateDate: null, rateTimestamp: null, fetchedAt: new Date().toISOString(), source: 'identity' };
   const cached = readCachedRate(code);
   const source = activeSource();
-  const freshness = source.provider === 'Twelve Data' ? 30000 : CACHE_FRESH_MS;
+  const freshness = source.provider === 'Frankfurter' ? CACHE_FRESH_MS : 30000;
   if (!options.force && cached && Date.now() - Date.parse(cached.fetchedAt) < freshness) return cached;
 
   const controller = new AbortController();
