@@ -7,177 +7,174 @@ export type ExchangeRate = {
   pair: string;
   code: CurrencyCode;
   value: string;
-  provider: 'Frankfurter' | 'Twelve Data' | 'Morningstar' | 'Local';
+  provider: 'exchangerate.dev' | 'Local';
   rateDate: string | null;
   rateTimestamp: string | null;
+  responseTimestamp: string | null;
+  dataUpdatedAt: string | null;
+  quoteSource: string | null;
+  marketSession: string | null;
+  stale: boolean | null;
+  delaySeconds: number | null;
   fetchedAt: string;
   source: RateSourceStatus;
 };
-
+export type RateLimitKind = 'minute' | 'hour' | 'monthly' | 'unknown';
+export type RateLimitState = {
+  kind: RateLimitKind;
+  code: string | null;
+  scope: string | null;
+  resetAt: string | null;
+  remaining: number | null;
+};
 export class RateError extends Error {
   constructor(readonly key: MessageKey) { super(key); }
 }
-
-export interface ExchangeRateSource {
-  readonly provider: ExchangeRate['provider'];
-  fetch(code: CurrencyCode, signal: AbortSignal): Promise<ExchangeRate>;
+export class RateLimitError extends RateError {
+  constructor(readonly limit: RateLimitState) { super('rateLimitReached'); }
 }
-
-const CACHE_PREFIX = 'stm-rate-v2-';
-const OLD_CACHE_PREFIX = 'stm-rate-v1-';
-export const CACHE_FRESH_MS = 4 * 60 * 60 * 1000;
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const validDate = (value: string): boolean => {
-  if (!ISO_DATE.test(value)) return false;
-  const timestamp = Date.parse(`${value}T00:00:00Z`);
-  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
-};
-const positiveRate = (value: unknown): string => {
-  if (typeof value !== 'string' && typeof value !== 'number') throw new RateError('rateInvalid');
-  try {
-    const decimal = new Decimal(value);
-    if (!decimal.isFinite() || decimal.lte(0)) throw new RateError('rateInvalid');
-    return decimal.toString();
-  } catch { throw new RateError('rateInvalid'); }
-};
+const CACHE_PREFIX = 'stm-rate-v3-exchangerate.dev-';
+const COOLDOWN_KEY = 'stm-rate-limit-v1-exchangerate.dev';
 const validTimestamp = (value: unknown): value is string =>
   typeof value === 'string' && /(?:Z|[+-]\d\d:\d\d)$/.test(value) &&
   Number.isFinite(Date.parse(value));
+const positiveRate = (value: unknown): string => {
+  if (typeof value !== 'string' && typeof value !== 'number') throw new RateError('rateInvalid');
+  try {
+    const number = new Decimal(value);
+    if (!number.isFinite() || number.lte(0)) throw new Error();
+    return number.toString();
+  } catch { throw new RateError('rateInvalid'); }
+};
+const optionalTimestamp = (value: unknown): string | null =>
+  validTimestamp(value) ? value : null;
 
-export function parseFrankfurterResponse(payload: unknown, code: CurrencyCode): ExchangeRate {
+export function parseExchangeRateResponse(payload: unknown, code: CurrencyCode,
+  delaySeconds: number | null = null, now = new Date()): ExchangeRate {
   if (!payload || typeof payload !== 'object') throw new RateError('rateInvalid');
   const data = payload as Record<string, unknown>;
-  if (data.base !== code || data.quote !== 'EGP' ||
-      typeof data.rate !== 'number' || typeof data.date !== 'string' || !validDate(data.date)) {
+  const rates = data.rates as Record<string, unknown> | undefined;
+  const effective = data.effective_at as Record<string, unknown> | undefined;
+  const sources = data.sources as Record<string, unknown> | undefined;
+  const stale = data.stale as Record<string, unknown> | undefined;
+  if (data.result !== 'success' || data.base !== code || !rates ||
+    !validTimestamp(data.timestamp) || !validTimestamp(effective?.EGP)) {
     throw new RateError('rateInvalid');
   }
-  return { pair: `${code}/EGP`, code, value: positiveRate(data.rate), provider: 'Frankfurter',
-    rateDate: data.date, rateTimestamp: null, fetchedAt: new Date().toISOString(), source: 'network' };
-}
-
-export function parseProxyResponse(payload: unknown, code: CurrencyCode,
-  expectedProvider: 'Twelve Data' | 'Morningstar' = 'Twelve Data'): ExchangeRate {
-  if (!payload || typeof payload !== 'object') throw new RateError('rateInvalid');
-  const data = payload as Record<string, unknown>;
-  if (data.provider !== expectedProvider || data.pair !== `${code}/EGP` ||
-      !validTimestamp(data.rateTimestamp)) throw new RateError('rateInvalid');
-  return { pair: `${code}/EGP`, code, value: positiveRate(data.rate), provider: expectedProvider,
-    rateDate: data.rateTimestamp.slice(0, 10), rateTimestamp: data.rateTimestamp,
-    fetchedAt: new Date().toISOString(), source: 'network' };
-}
-
-type ProxyProvider = 'Twelve Data' | 'Morningstar';
-const proxyUrl = import.meta.env.VITE_FX_PROXY_URL?.trim() ?? '';
-const configuredProvider = import.meta.env.VITE_FX_PROVIDER?.trim() ||
-  import.meta.env.VITE_FX_PROXY_PROVIDER?.trim() || (proxyUrl ? 'Twelve Data' : 'Frankfurter');
-
-function createProxySource(provider: ProxyProvider, endpoint: string): ExchangeRateSource {
-  if (!endpoint) throw new RateError('providerUnavailable');
-  let url: URL;
-  try { url = new URL(endpoint); }
-  catch { throw new RateError('proxyConfiguration'); }
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' &&
-      (url.hostname === 'localhost' || url.hostname === '127.0.0.1'))) {
-    throw new RateError('proxyConfiguration');
-  }
-  if (url.username || url.password || [...url.searchParams.keys()].some((key) =>
-    /key|token|secret|password|auth/i.test(key))) throw new RateError('proxyConfiguration');
   return {
-    provider,
-    async fetch(code, signal) {
-      const requestUrl = new URL(url);
-      requestUrl.searchParams.set('code', code);
-      const response = await fetch(requestUrl, { signal, cache: 'no-store',
-        headers: { Accept: 'application/json' } });
-      if (response.status === 429) throw new RateError('rateBusy');
-      if (!response.ok) throw new RateError('rateServiceError');
-      return parseProxyResponse(await response.json(), code, provider);
-    },
+    pair: `${code}/EGP`, code, value: positiveRate(rates.EGP),
+    provider: 'exchangerate.dev', rateDate: effective.EGP.slice(0, 10),
+    rateTimestamp: effective.EGP, responseTimestamp: data.timestamp,
+    dataUpdatedAt: optionalTimestamp(data.data_updated_at),
+    quoteSource: typeof sources?.EGP === 'string' ? sources.EGP : null,
+    marketSession: typeof data.market_session === 'string' ? data.market_session : null,
+    stale: typeof stale?.EGP === 'boolean' ? stale.EGP : null,
+    delaySeconds, fetchedAt: now.toISOString(), source: 'network',
   };
 }
-
-export function createMorningstarSource(endpoint: string): ExchangeRateSource {
-  return createProxySource('Morningstar', endpoint);
+export function parseRetryAfter(value: string | null, now = Date.now()): string | null {
+  if (!value) return null;
+  const seconds = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value.trim()) : NaN;
+  const reset = Number.isFinite(seconds) ? now + seconds * 1000 : Date.parse(value);
+  return Number.isFinite(reset) && reset > now ? new Date(reset).toISOString() : null;
 }
-
-export function selectRateSource(provider: string, endpoint = ''): ExchangeRateSource {
-  if (provider === 'Frankfurter') return frankfurterSource;
-  if (provider === 'Morningstar') return createMorningstarSource(endpoint);
-  if (provider === 'Twelve Data') return createProxySource('Twelve Data', endpoint);
-  throw new RateError('proxyConfiguration');
+export function parseUnixReset(value: string | null, now = Date.now()): string | null {
+  if (!value || !/^\d+$/.test(value.trim())) return null;
+  const reset = Number(value.trim()) * 1000;
+  return Number.isFinite(reset) && reset > now ? new Date(reset).toISOString() : null;
 }
-
-function activeSource(): ExchangeRateSource {
-  return selectRateSource(configuredProvider, proxyUrl);
+export function parseRateLimit(response: Response, payload: unknown,
+  now = Date.now()): RateLimitState {
+  const body = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const error = body.error && typeof body.error === 'object' ?
+    body.error as Record<string, unknown> : body;
+  const code = typeof error.code === 'string' ? error.code : null;
+  const scope = response.headers.get('X-RateLimit-Scope');
+  const kind: RateLimitKind = code === 'ip_rate_limited' ? 'hour' :
+    code === 'rate_limited' ? 'minute' :
+      code === 'quota_exceeded' ? 'monthly' : 'unknown';
+  const retryAt = parseRetryAfter(response.headers.get('Retry-After'), now);
+  const headerReset = parseUnixReset(response.headers.get('X-RateLimit-Reset'), now);
+  // A reset is shown only when the provider supplied a valid value.
+  const resetAt = retryAt ?? headerReset;
+  const rawRemaining = response.headers.get('X-RateLimit-Remaining');
+  const remaining = rawRemaining !== null && /^\d+$/.test(rawRemaining) ?
+    Number(rawRemaining) : null;
+  return { kind, code, scope, resetAt, remaining };
 }
-
-const frankfurterSource: ExchangeRateSource = {
-  provider: 'Frankfurter',
-  async fetch(code, signal) {
-    const response = await fetch(`https://api.frankfurter.dev/v2/rate/${code}/EGP`,
-      { signal, cache: 'no-store', headers: { Accept: 'application/json' } });
-    if (response.status === 429) throw new RateError('rateBusy');
-    if (!response.ok) throw new RateError('rateServiceError');
-    return parseFrankfurterResponse(await response.json(), code);
-  },
-};
-
-export function activeProviderName(): ExchangeRate['provider'] {
-  return configuredProvider === 'Frankfurter' || configuredProvider === 'Morningstar' ||
-    configuredProvider === 'Twelve Data' ? configuredProvider : 'Local';
-}
-
-function cacheKey(provider: ExchangeRate['provider'], code: CurrencyCode): string {
-  return `${CACHE_PREFIX}${provider}-${code}-EGP`;
-}
-
-export function readCachedRate(code: CurrencyCode): ExchangeRate | null {
+export function readRateLimit(): RateLimitState | null {
   try {
-    const provider = activeProviderName();
-    const raw = localStorage.getItem(cacheKey(provider, code)) ??
-      (provider === 'Frankfurter' ? localStorage.getItem(`${OLD_CACHE_PREFIX}${code}-EGP`) : null);
+    const raw = localStorage.getItem(COOLDOWN_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw) as ExchangeRate;
-    if (data.pair !== `${code}/EGP` || data.code !== code ||
-        (data.provider && data.provider !== provider) ||
-        typeof data.value !== 'string' ||
-        typeof data.fetchedAt !== 'string' || !validTimestamp(data.fetchedAt) ||
-        Date.parse(data.fetchedAt) > Date.now() + 60000 ||
-        typeof data.rateDate !== 'string' || !validDate(data.rateDate) ||
-        (data.rateTimestamp != null && !validTimestamp(data.rateTimestamp))) return null;
-    positiveRate(data.value);
-    return { ...data, provider, rateTimestamp: data.rateTimestamp ?? null, source: 'cache' };
+    const data = JSON.parse(raw) as RateLimitState;
+    if (!validTimestamp(data.resetAt) || Date.parse(data.resetAt) <= Date.now()) {
+      localStorage.removeItem(COOLDOWN_KEY);
+      return null;
+    }
+    return data;
   } catch { return null; }
 }
-
-function saveRate(rate: ExchangeRate): void {
-  try { localStorage.setItem(cacheKey(rate.provider, rate.code), JSON.stringify(rate)); }
-  catch { /* The latest response still works when browser storage is disabled. */ }
+function saveRateLimit(limit: RateLimitState): void {
+  if (!limit.resetAt) return;
+  try { localStorage.setItem(COOLDOWN_KEY, JSON.stringify(limit)); } catch { /* optional */ }
 }
-
-export async function getExchangeRate(
-  code: CurrencyCode,
-  options: { force?: boolean; allowCachedFallback?: boolean; signal?: AbortSignal } = {},
-): Promise<ExchangeRate> {
+function clearRateLimit(): void {
+  try { localStorage.removeItem(COOLDOWN_KEY); } catch { /* optional */ }
+}
+function cacheKey(code: CurrencyCode): string { return `${CACHE_PREFIX}${code}_EGP`; }
+export function readCachedRate(code: CurrencyCode): ExchangeRate | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(code));
+    if (!raw) return null;
+    const data = JSON.parse(raw) as ExchangeRate;
+    if (data.provider !== 'exchangerate.dev' || data.code !== code ||
+      data.pair !== `${code}/EGP` || !validTimestamp(data.rateTimestamp) ||
+      !validTimestamp(data.responseTimestamp) || !validTimestamp(data.fetchedAt) ||
+      Date.parse(data.fetchedAt) > Date.now() + 60000 ||
+      data.rateDate !== data.rateTimestamp.slice(0, 10)) return null;
+    positiveRate(data.value);
+    return { ...data, source: 'cache' };
+  } catch { return null; }
+}
+function saveRate(rate: ExchangeRate): void {
+  try { localStorage.setItem(cacheKey(rate.code), JSON.stringify(rate)); } catch { /* optional */ }
+}
+export function activeProviderName(): ExchangeRate['provider'] { return 'exchangerate.dev'; }
+export async function getExchangeRate(code: CurrencyCode,
+  options: { signal?: AbortSignal } = {}): Promise<ExchangeRate> {
   if (!isCurrency(code)) throw new RateError('unsupportedCurrency');
-  if (code === 'EGP') return { pair: 'EGP/EGP', code, value: '1', provider: 'Local',
-    rateDate: null, rateTimestamp: null, fetchedAt: new Date().toISOString(), source: 'identity' };
-  const cached = readCachedRate(code);
-  const source = activeSource();
-  const freshness = source.provider === 'Frankfurter' ? CACHE_FRESH_MS : 30000;
-  if (!options.force && cached && Date.now() - Date.parse(cached.fetchedAt) < freshness) return cached;
-
+  if (code === 'EGP') return {
+    pair: 'EGP/EGP', code, value: '1', provider: 'Local',
+    rateDate: null, rateTimestamp: null, responseTimestamp: null, dataUpdatedAt: null,
+    quoteSource: null, marketSession: null, stale: null, delaySeconds: null,
+    fetchedAt: new Date().toISOString(), source: 'identity',
+  };
+  const cooldown = readRateLimit();
+  if (cooldown) throw new RateLimitError(cooldown);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   const abort = () => controller.abort();
   options.signal?.addEventListener('abort', abort);
   try {
-    const rate = await source.fetch(code, controller.signal);
+    const response = await fetch(
+      `https://api.exchangerate.dev/v1/latest/${code}?symbols=EGP`,
+      { signal: controller.signal, cache: 'no-store', headers: { Accept: 'application/json' } },
+    );
+    if (response.status === 429) {
+      const body = await response.json().catch(() => null) as unknown;
+      const limit = parseRateLimit(response, body);
+      saveRateLimit(limit);
+      throw new RateLimitError(limit);
+    }
+    if (!response.ok) throw new RateError('rateServiceError');
+    const delay = response.headers.get('X-Price-Delay-Seconds');
+    const delaySeconds = delay && /^\d+$/.test(delay) ? Number(delay) : null;
+    const rate = parseExchangeRateResponse(await response.json(), code, delaySeconds);
     saveRate(rate);
+    clearRateLimit();
     return rate;
   } catch (error) {
     if (options.signal?.aborted) throw new RateError('rateCancelled');
-    if (options.allowCachedFallback !== false && cached) return { ...cached, source: 'offline' };
     if (error instanceof RateError) throw error;
     throw new RateError('rateUnavailableError');
   } finally {

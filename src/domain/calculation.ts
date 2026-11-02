@@ -13,6 +13,7 @@ export type Calculation = {
   converted: string;
   profitAmount: string;
   finalPrice: string;
+  unroundedFinalPrice?: string;
   rateDate: string | null;
   rateTimestamp?: string | null;
   provider?: string;
@@ -56,7 +57,7 @@ export function calculate(
   rateDate: string | null,
   fetchedAt: string,
   source: Calculation['source'],
-  provider = 'Frankfurter',
+  provider = 'exchangerate.dev',
   rateTimestamp: string | null = null,
 ): Calculation {
   const priceError = validatePrice(price);
@@ -68,14 +69,21 @@ export function calculate(
   const percentage = new Decimal(profit.trim());
   const converted = original.mul(exchange);
   const profitAmount = converted.mul(percentage).div(100);
+  const unroundedFinalPrice = converted.plus(profitAmount);
   return {
     id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
     createdAt: new Date().toISOString(), currency,
     original: original.toString(), rate: exchange.toString(),
     profitPercent: percentage.toString(), converted: converted.toString(),
-    profitAmount: profitAmount.toString(), finalPrice: converted.plus(profitAmount).toString(),
+    profitAmount: profitAmount.toString(),
+    unroundedFinalPrice: unroundedFinalPrice.toString(),
+    finalPrice: roundToNearestFive(unroundedFinalPrice).toString(),
     rateDate, rateTimestamp, provider, fetchedAt, source,
   };
+}
+
+export function roundToNearestFive(value: Decimal.Value): Decimal {
+  return new Decimal(value).div(5).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).mul(5);
 }
 
 export function formatMoney(value: string): string {
@@ -85,5 +93,14 @@ export function formatMoney(value: string): string {
 }
 
 export function formatRate(value: string): string {
-  return new Decimal(value).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
+  return new Decimal(value).toString();
+}
+
+export function formatExactMoney(value: string): string {
+  const [whole, fraction] = new Decimal(value).toFixed().split('.');
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction ? `.${fraction}` : ''}`;
+}
+
+export function formatWholeMoney(value: string): string {
+  return new Decimal(value).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }

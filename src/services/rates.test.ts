@@ -1,100 +1,95 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMorningstarSource, getExchangeRate, parseFrankfurterResponse, parseProxyResponse,
-  readCachedRate, selectRateSource } from './rates';
+import { getExchangeRate, parseExchangeRateResponse, parseRateLimit, parseRetryAfter,
+  parseUnixReset, RateLimitError, readCachedRate } from './rates';
 
-const response = { date: '2026-11-02', base: 'USD', quote: 'EGP', rate: 50.1234 };
+const payload = (base = 'SAR', rate = 14.763) => ({
+  result: 'success', base, source: 'live', sources: { EGP: 'live' },
+  market_session: 'open', timestamp: '2026-11-02T16:58:54Z',
+  data_updated_at: '2026-11-02T16:42:59Z',
+  effective_at: { EGP: '2026-11-02T16:42:59Z' },
+  rates: { EGP: rate }, stale: { EGP: false },
+});
+const ok = (base = 'SAR', rate = 14.763) => ({
+  ok: true, status: 200, headers: new Headers({ 'X-Price-Delay-Seconds': '900' }),
+  json: async () => payload(base, rate),
+}) as Response;
+const limited = (code: string, headers: Record<string, string> = {}) => ({
+  ok: false, status: 429, headers: new Headers(headers),
+  json: async () => ({ error: { code } }),
+}) as Response;
 
-describe('exchange rate service', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()));
-  it('parses the documented v2 single-pair response', () => {
-    const rate = parseFrankfurterResponse(response, 'USD');
-    expect(rate.value).toBe('50.1234');
-    expect(rate.rateDate).toBe('2026-11-02');
-    expect(() => parseFrankfurterResponse({ ...response, quote: 'EUR' }, 'USD')).toThrow();
-    expect(() => parseFrankfurterResponse({ ...response, rate: -1 }, 'USD')).toThrow();
+describe('exchangerate.dev service', () => {
+  beforeEach(() => { localStorage.clear(); vi.stubGlobal('fetch', vi.fn()); });
+  it('parses the documented response and validates the requested pair', () => {
+    expect(parseExchangeRateResponse(payload(), 'SAR', 900)).toMatchObject({
+      value: '14.763', provider: 'exchangerate.dev', pair: 'SAR/EGP',
+      rateTimestamp: '2026-11-02T16:42:59Z', delaySeconds: 900, marketSession: 'open',
+    });
+    expect(() => parseExchangeRateResponse(payload('USD'), 'SAR')).toThrow();
+    expect(() => parseExchangeRateResponse(payload('SAR', -1), 'SAR')).toThrow();
+    expect(() => parseExchangeRateResponse({ ...payload(), effective_at: {} }, 'SAR')).toThrow();
   });
-  it('accepts a normalized licensed-provider response only for the configured provider and pair', () => {
-    const payload = { provider: 'Morningstar', pair: 'SAR/EGP', rate: '12.345678',
-      rateTimestamp: '2026-11-02T12:34:56Z' };
-    const rate = parseProxyResponse(payload, 'SAR', 'Morningstar');
-    expect(rate.provider).toBe('Morningstar');
-    expect(rate.value).toBe('12.345678');
-    expect(rate.rateTimestamp).toBe('2026-11-02T12:34:56Z');
-    expect(() => parseProxyResponse(payload, 'SAR', 'Twelve Data')).toThrow();
-    expect(() => parseProxyResponse({ ...payload, pair: 'USD/EGP' }, 'SAR', 'Morningstar')).toThrow();
-    expect(() => parseProxyResponse({ ...payload, rateTimestamp: 'bad' }, 'SAR', 'Morningstar')).toThrow();
+  it('makes a new no-store request for every call and updates the pair cache', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok('SAR', 12)).mockResolvedValueOnce(ok('SAR', 13));
+    expect((await getExchangeRate('SAR')).value).toBe('12');
+    expect(readCachedRate('SAR')?.value).toBe('12');
+    expect((await getExchangeRate('SAR')).value).toBe('13');
+    expect(readCachedRate('SAR')?.value).toBe('13');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledWith('https://api.exchangerate.dev/v1/latest/SAR?symbols=EGP',
+      expect.objectContaining({ cache: 'no-store' }));
   });
-  it('never falls back when Morningstar is selected without a secure proxy', () => {
-    expect(() => selectRateSource('Morningstar')).toThrowError('providerUnavailable');
-    expect(() => selectRateSource('Morningstar', 'https://proxy.example/rate?api_key=secret'))
-      .toThrowError('proxyConfiguration');
-    expect(() => selectRateSource('Morningstar', 'http://proxy.example/rate'))
-      .toThrowError('proxyConfiguration');
-    expect(fetch).not.toHaveBeenCalled();
+  it('honors the provider cooldown and preserves cached rates', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok()).mockResolvedValueOnce(
+      limited('rate_limited', { 'Retry-After': '120', 'X-RateLimit-Scope': 'minute' }));
+    await getExchangeRate('SAR');
+    await expect(getExchangeRate('SAR')).rejects.toBeInstanceOf(RateLimitError);
+    expect(readCachedRate('SAR')?.value).toBe('14.763');
+    await expect(getExchangeRate('SAR')).rejects.toBeInstanceOf(RateLimitError);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(readCachedRate('USD')).toBeNull();
   });
-  it('shows an unconfigured Morningstar selection without fetching Frankfurter', async () => {
-    vi.stubEnv('VITE_FX_PROVIDER', 'Morningstar');
-    vi.resetModules();
+  it('tries the API again after the provider cooldown expires', async () => {
+    vi.useFakeTimers();
     try {
-      const selectedService = await import('./rates');
-      expect(selectedService.activeProviderName()).toBe('Morningstar');
-      await expect(selectedService.getExchangeRate('SAR', { force: true,
-        allowCachedFallback: false })).rejects.toMatchObject({ key: 'providerUnavailable' });
-      expect((await selectedService.getExchangeRate('EGP')).source).toBe('identity');
-      expect(fetch).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
+      vi.setSystemTime(new Date('2026-11-02T12:00:00Z'));
+      vi.mocked(fetch).mockResolvedValueOnce(limited('rate_limited', { 'Retry-After': '60' }))
+        .mockResolvedValueOnce(ok());
+      await expect(getExchangeRate('SAR')).rejects.toBeInstanceOf(RateLimitError);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(new Date('2026-11-02T12:01:01Z'));
+      expect((await getExchangeRate('SAR')).source).toBe('network');
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
   });
-  it('uses the Morningstar adapter contract with a fresh proxy request and source timestamps', async () => {
-    const payload = { provider: 'Morningstar', pair: 'SAR/EGP', rate: '12.345678',
-      rateTimestamp: '2026-11-02T12:34:56Z' };
-    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => payload } as Response);
-    const source = createMorningstarSource('https://rates.example/quote');
-    expect(source.provider).toBe('Morningstar');
-    const rate = await source.fetch('SAR', new AbortController().signal);
-    expect(fetch).toHaveBeenCalledWith(new URL('https://rates.example/quote?code=SAR'),
-      expect.objectContaining({ cache: 'no-store', headers: { Accept: 'application/json' } }));
-    expect(rate).toMatchObject({ provider: 'Morningstar', pair: 'SAR/EGP', value: '12.345678',
-      rateTimestamp: '2026-11-02T12:34:56Z', source: 'network' });
-    expect(Number.isFinite(Date.parse(rate.fetchedAt))).toBe(true);
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ ...payload, pair: 'USD/EGP' }) } as Response);
-    await expect(source.fetch('SAR', new AbortController().signal)).rejects.toMatchObject({ key: 'rateInvalid' });
+  it('does not invent a reset or use a different pair on 429', async () => {
+    vi.mocked(fetch).mockResolvedValue(limited('ip_rate_limited'));
+    await expect(getExchangeRate('USD')).rejects.toMatchObject({
+      limit: { kind: 'hour', resetAt: null },
+    });
+    expect(readCachedRate('USD')).toBeNull();
   });
-  it('skips the network for EGP', async () => {
+  it('parses delta seconds, HTTP dates, Unix seconds, and limit types', () => {
+    const now = Date.parse('2026-11-02T12:00:00Z');
+    expect(parseRetryAfter('90', now)).toBe('2026-11-02T12:01:30.000Z');
+    expect(parseRetryAfter('Mon, 02 Nov 2026 13:00:00 GMT', now))
+      .toBe('2026-11-02T13:00:00.000Z');
+    expect(parseUnixReset(String((now + 3600000) / 1000), now))
+      .toBe('2026-11-02T13:00:00.000Z');
+    expect(parseRateLimit(limited('quota_exceeded', { 'X-RateLimit-Reset': String((now + 3600000) / 1000) }),
+      { error: { code: 'quota_exceeded' } }, now))
+      .toMatchObject({ kind: 'monthly', resetAt: '2026-11-02T13:00:00.000Z' });
+    expect(parseRateLimit(limited('ip_rate_limited'), null, now))
+      .toMatchObject({ kind: 'unknown', resetAt: null });
+  });
+  it('never substitutes cache for ordinary network failure', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(ok()).mockRejectedValueOnce(new Error('offline'));
+    await getExchangeRate('SAR');
+    await expect(getExchangeRate('SAR')).rejects.toMatchObject({ key: 'rateUnavailableError' });
+    expect(readCachedRate('SAR')?.value).toBe('14.763');
+  });
+  it('uses the EGP identity without an external request', async () => {
     expect((await getExchangeRate('EGP')).value).toBe('1');
     expect(fetch).not.toHaveBeenCalled();
-  });
-  it('uses a fresh cache and refreshes on request', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => response } as Response);
-    expect((await getExchangeRate('USD')).source).toBe('network');
-    expect(readCachedRate('USD')?.value).toBe('50.1234');
-    expect((await getExchangeRate('USD')).source).toBe('cache');
-    expect(fetch).toHaveBeenCalledTimes(1);
-    await getExchangeRate('USD', { force: true });
-    expect(fetch).toHaveBeenCalledTimes(2);
-  });
-  it('only falls back to cache when explicitly permitted', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => response } as Response);
-    await getExchangeRate('USD');
-    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'));
-    expect((await getExchangeRate('USD', { force: true })).source).toBe('offline');
-    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'));
-    await expect(getExchangeRate('USD', { force: true, allowCachedFallback: false }))
-      .rejects.toMatchObject({ key: 'rateUnavailableError' });
-  });
-  it('refreshes an expired cached rate', async () => {
-    localStorage.setItem('stm-rate-v1-USD-EGP', JSON.stringify({
-      pair: 'USD/EGP', code: 'USD', value: '49', rateDate: '2026-10-31',
-      fetchedAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(), source: 'network',
-    }));
-    vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => response } as Response);
-    expect((await getExchangeRate('USD')).value).toBe('50.1234');
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it('blocks when no cache exists', async () => {
-    vi.mocked(fetch).mockRejectedValue(new Error('offline'));
-    await expect(getExchangeRate('USD')).rejects.toMatchObject({ key: 'rateUnavailableError' });
   });
 });

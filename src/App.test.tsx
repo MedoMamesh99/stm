@@ -5,13 +5,20 @@ import App from './App';
 
 let quote = 12;
 let fail = false;
+let limited = false;
 beforeEach(() => {
   localStorage.clear();
-  quote = 12; fail = false;
+  quote = 12; fail = false; limited = false;
   vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url: string, options: RequestInit) => {
     expect(options.cache).toBe('no-store');
     if (fail) throw new Error('offline');
-    return { ok: true, json: async () => ({ date: '2026-11-02', base: 'SAR', quote: 'EGP', rate: quote }) };
+    if (limited) return { ok: false, status: 429,
+      headers: new Headers({ 'Retry-After': '120', 'X-RateLimit-Scope': 'minute' }),
+      json: async () => ({ error: { code: 'rate_limited' } }) };
+    return { ok: true, status: 200, headers: new Headers({ 'X-Price-Delay-Seconds': '900' }),
+      json: async () => ({ result: 'success', base: 'SAR', timestamp: '2026-11-02T16:58:54Z',
+        effective_at: { EGP: '2026-11-02T16:42:59Z' }, rates: { EGP: quote },
+        sources: { EGP: 'live' }, stale: { EGP: false }, market_session: 'open' }) };
   }));
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -42,8 +49,8 @@ it('keeps one compact language selector and an accessible icon-only theme contro
 it('starts with SAR and fetches a fresh rate for every calculation', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await waitFor(() => expect(screen.getByText('1 SAR = 12.0000 EGP')).toBeInTheDocument());
-  expect(screen.getByText(/Provider: Frankfurter/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText('1 SAR = 12 EGP')).toBeInTheDocument());
+  expect(screen.getByText(/Provider: exchangerate.dev/)).toBeInTheDocument();
   expect(screen.getByText(/Status: Latest retrieved/)).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
@@ -53,11 +60,11 @@ it('starts with SAR and fetches a fresh rate for every calculation', async () =>
   await user.type(screen.getByLabelText('Profit %'), '30');
   quote = 13;
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
-  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,690.00'));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,690'));
   expect(fetch).toHaveBeenCalledTimes(2);
   quote = 14;
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
-  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,820.00'));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,820'));
   expect(fetch).toHaveBeenCalledTimes(3);
   fireEvent.change(screen.getByLabelText('Unit Price'), { target: { value: '101' } });
   expect(document.querySelector('.final-number')).not.toBeInTheDocument();
@@ -68,14 +75,14 @@ it('starts with SAR and fetches a fresh rate for every calculation', async () =>
 it('blocks stale calculation after failure and offers an explicit saved-rate choice', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await waitFor(() => expect(screen.getByText('1 SAR = 12.0000 EGP')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('1 SAR = 12 EGP')).toBeInTheDocument());
   await user.type(screen.getByLabelText('Unit Price'), '100');
   fail = true;
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Calculate Using Cached Rate' })).toBeInTheDocument());
   expect(document.querySelector('.final-number')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Calculate Using Cached Rate' }));
-  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,200.00'));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,200'));
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
@@ -100,16 +107,62 @@ it('switches to Arabic RTL and remembers only the language and theme preferences
 it('switches currency and uses the EGP identity rate without another request', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await waitFor(() => expect(screen.getByText('1 SAR = 12.0000 EGP')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('1 SAR = 12 EGP')).toBeInTheDocument());
   await user.click(screen.getByRole('button', { name: /currency: sar/i }));
   const dialog = screen.getByRole('dialog', { name: /choose currency/i });
   await user.type(within(dialog).getByRole('searchbox'), 'Egyptian');
   await user.click(within(dialog).getByRole('button', { name: /EGP Egyptian Pound/i }));
-  await waitFor(() => expect(screen.getByText('1 EGP = 1.0000 EGP')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('1 EGP = 1 EGP')).toBeInTheDocument());
   expect(screen.getByText('EGP converts to itself at exactly 1. No rate provider is contacted.')).toBeInTheDocument();
-  expect(within(screen.getByRole('contentinfo')).queryByText('Frankfurter')).not.toBeInTheDocument();
+  expect(within(screen.getByRole('contentinfo')).queryByText('exchangerate.dev')).not.toBeInTheDocument();
   await user.type(screen.getByLabelText('Unit Price'), '100');
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
-  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('100.00'));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('100'));
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it('automatically calculates with the saved quote on 429 and shows the English warning', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await waitFor(() => expect(screen.getByText('1 SAR = 12 EGP')).toBeInTheDocument());
+  await user.type(screen.getByLabelText('Unit Price'), '100');
+  limited = true;
+  await user.click(screen.getByRole('button', { name: /calculate final price/i }));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,200'));
+  expect(screen.getByText('Exchange-rate API limit reached')).toBeInTheDocument();
+  expect(screen.getByText(/Your calculation is using the latest saved exchange rate/)).toBeInTheDocument();
+  expect(screen.getByText(/API available again in/)).toBeInTheDocument();
+  expect(screen.getByText(/Status: Saved rate/)).toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(2);
+  await user.click(screen.getByRole('button', { name: /calculate final price/i }));
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('copies and saves the rounded final price', async () => {
+  const user = userEvent.setup();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  render(<App />);
+  await waitFor(() => expect(screen.getByText('1 SAR = 12 EGP')).toBeInTheDocument());
+  await user.type(screen.getByLabelText('Unit Price'), '302.6075');
+  await user.click(screen.getByRole('button', { name: /calculate final price/i }));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('3,630'));
+  expect(screen.getAllByText(/3,631.29/).length).toBeGreaterThan(0);
+  await user.click(screen.getByRole('button', { name: 'Copy Result' }));
+  expect(writeText).toHaveBeenCalledWith('EGP 3,630');
+  const saved = JSON.parse(localStorage.getItem('stm-history-v1') ?? '[]');
+  expect(saved[0].finalPrice).toBe('3630');
+});
+
+it('shows the Arabic rate-limit warning and blocks when no quote was saved', async () => {
+  const user = userEvent.setup();
+  limited = true;
+  render(<App />);
+  await waitFor(() => expect(screen.getByText('Exchange-rate API limit reached')).toBeInTheDocument());
+  await user.click(screen.getByRole('button', { name: 'العربية' }));
+  expect(screen.getByText('تم الوصول إلى الحد المسموح لطلبات سعر الصرف')).toBeInTheDocument();
+  await user.type(screen.getByLabelText('سعر الوحدة'), '100');
+  await user.click(screen.getByRole('button', { name: /احسب السعر النهائي/i }));
+  expect(document.querySelector('.final-number')).not.toBeInTheDocument();
+  expect(screen.getByText(/ولا يوجد سعر محفوظ لهذه العملة/)).toBeInTheDocument();
 });

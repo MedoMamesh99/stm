@@ -1,4 +1,4 @@
-import type { Calculation } from '../domain/calculation';
+import { roundToNearestFive, type Calculation } from '../domain/calculation';
 import Decimal from 'decimal.js';
 import { isCurrency } from '../domain/currencies';
 
@@ -16,7 +16,11 @@ export function loadHistory(): Calculation[] {
       typeof entry.profitPercent === 'string' && typeof entry.createdAt === 'string' &&
       [entry.finalPrice, entry.original, entry.rate, entry.profitPercent]
         .every((number) => { try { return new Decimal(number).isFinite(); } catch { return false; } })
-    ).slice(0, 20);
+    ).slice(0, 20).map((entry) => ({
+      ...entry,
+      unroundedFinalPrice: entry.unroundedFinalPrice ?? entry.finalPrice,
+      finalPrice: roundToNearestFive(entry.unroundedFinalPrice ?? entry.finalPrice).toString(),
+    }));
   } catch { return []; }
 }
 

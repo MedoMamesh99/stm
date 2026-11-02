@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowDownRight, ArrowUpRight, Check, Clipboard, Clock3, History, Moon, RefreshCw, RotateCcw, ShieldCheck, Sun, Trash2, TrendingUp } from 'lucide-react';
 import CurrencyPicker from './components/CurrencyPicker';
-import { calculate, formatMoney, formatRate, validatePrice, validateProfit, type Calculation } from './domain/calculation';
+import { calculate, formatExactMoney, formatRate, formatWholeMoney, validatePrice, validateProfit, type Calculation } from './domain/calculation';
 import { currencyName, type CurrencyCode } from './domain/currencies';
 import { providerLabel, t, type Language, type MessageKey } from './i18n';
 import { addHistory, clearHistory, loadHistory } from './services/history';
-import { activeProviderName, getExchangeRate, RateError, readCachedRate, type ExchangeRate } from './services/rates';
+import { getExchangeRate, RateError, RateLimitError, readCachedRate, type ExchangeRate, type RateLimitState } from './services/rates';
 
 const asset = `${import.meta.env.BASE_URL}images/stm_logo.png`;
 const issue = (error: unknown): MessageKey => error instanceof RateError ? error.key : 'calculationFailed';
@@ -21,6 +21,39 @@ function dateText(value: string | null, language: Language): string {
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return <div className="breakdown-row"><span>{label}</span><strong>{children}</strong></div>;
 }
+function LimitWarning({ limit, rate, language }: {
+  limit: RateLimitState; rate: ExchangeRate | null; language: Language;
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!limit.resetAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, [limit.resetAt]);
+  const remaining = limit.resetAt ? Math.max(0, Date.parse(limit.resetAt) - now) : null;
+  const minutes = remaining === null ? null : Math.ceil(remaining / 60000);
+  const days = minutes === null ? null : Math.floor(minutes / 1440);
+  const hours = minutes === null ? null : Math.floor((minutes % 1440) / 60);
+  const mins = minutes === null ? null : minutes % 60;
+  const ageMinutes = rate ? Math.max(0, Math.floor((now - Date.parse(rate.fetchedAt)) / 60000)) : null;
+  const ageDays = ageMinutes === null ? null : Math.floor(ageMinutes / 1440);
+  const ageHours = ageMinutes === null ? null : Math.floor((ageMinutes % 1440) / 60);
+  const ageMins = ageMinutes === null ? null : ageMinutes % 60;
+  const l = (key: MessageKey) => t(language, key);
+  return <div className="limit-warning" role="alert">
+    <strong>{l('rateLimitTitle')}</strong>
+    <p>{l(rate ? 'rateLimitBody' : 'rateLimitNoCache')}</p>
+    {rate && <div className="limit-details">
+      <span>{l('cachedRate')}: <bdi dir="ltr">1 {rate.code} = {formatRate(rate.value)} EGP</bdi></span>
+      <span>{l('providerUpdated')}: {dateText(rate.rateTimestamp, language)}</span>
+      <span>{l('fetched')}: {dateText(rate.fetchedAt, language)}</span>
+      <span>{l('savedRateAge')}: {ageDays} {l('days')}, {ageHours} {l('hours')}, {ageMins} {l('minutes')}</span>
+    </div>}
+    <p>{limit.resetAt && remaining !== null && remaining > 0
+      ? <>{l('apiResetAt')}: {dateText(limit.resetAt, language)} · {l('apiAvailableIn')} {days} {l('days')}, {hours} {l('hours')}, {mins} {l('minutes')}.</>
+      : l(limit.resetAt ? 'apiReady' : 'resetUnknown')}</p>
+  </div>;
+}
 export default function App() {
   const [language, setLanguage] = useState<Language>(() => {
     try { return localStorage.getItem('stm-language') === 'ar' ? 'ar' : 'en'; } catch { return 'en'; }
@@ -35,6 +68,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [rateError, setRateError] = useState<MessageKey | null>(null);
+  const [rateLimit, setRateLimit] = useState<RateLimitState | null>(null);
   const [failedCalculation, setFailedCalculation] = useState(false);
   const [priceError, setPriceError] = useState<MessageKey | null>(null);
   const [profitError, setProfitError] = useState<MessageKey | null>(null);
@@ -59,18 +93,24 @@ export default function App() {
   }, [language]);
   useEffect(() => {
     const controller = new AbortController();
-    setRate(null); setRateError(null); setFailedCalculation(false); setLoading(true);
+    setRate(null); setRateError(null); setRateLimit(null); setFailedCalculation(false); setLoading(true);
     getExchangeRate(currency, { signal: controller.signal }).then(setRate)
-      .catch((error: unknown) => { if (!controller.signal.aborted) setRateError(issue(error)); })
+      .catch((error: unknown) => { if (!controller.signal.aborted) {
+        if (error instanceof RateLimitError) { setRateLimit(error.limit); setRate(readCachedRate(currency)); }
+        else setRateError(issue(error));
+      } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [currency]);
 
   async function refreshRate() {
     if (busyRef.current || loading) return;
-    setLoading(true); setRateError(null); setResult(null); setFailedCalculation(false);
-    try { setRate(await getExchangeRate(currency, { force: true, allowCachedFallback: false })); }
-    catch (error) { setRate(null); setRateError(issue(error)); }
+    setLoading(true); setRateError(null); setRateLimit(null); setResult(null); setFailedCalculation(false);
+    try { setRate(await getExchangeRate(currency)); }
+    catch (error) {
+      if (error instanceof RateLimitError) { setRateLimit(error.limit); setRate(readCachedRate(currency)); }
+      else { setRate(null); setRateError(issue(error)); }
+    }
     finally { setLoading(false); }
   }
   async function performCalculation(useCached = false) {
@@ -79,10 +119,16 @@ export default function App() {
     const m = validateProfit(profit) as MessageKey | null;
     setPriceError(p); setProfitError(m);
     if (p || m) return;
-    busyRef.current = true; setCalculating(true); setRateError(null); setResult(null); setFailedCalculation(false);
+    busyRef.current = true; setCalculating(true); setRateError(null); setRateLimit(null); setResult(null); setFailedCalculation(false);
     try {
-      const current = useCached ? readCachedRate(currency) :
-        await getExchangeRate(currency, { force: true, allowCachedFallback: false });
+      let current: ExchangeRate | null;
+      try { current = useCached ? readCachedRate(currency) : await getExchangeRate(currency); }
+      catch (error) {
+        if (!(error instanceof RateLimitError)) throw error;
+        setRateLimit(error.limit);
+        current = readCachedRate(currency);
+        if (!current) { setRate(null); setFailedCalculation(false); return; }
+      }
       if (!current) throw new RateError('rateUnavailableError');
       const chosen = useCached ? { ...current, source: 'offline' as const } : current;
       const next = calculate(price, profit, chosen.value, currency,
@@ -100,13 +146,13 @@ export default function App() {
   async function copyResult() {
     if (!result) return;
     try {
-      await navigator.clipboard.writeText(`EGP ${formatMoney(result.finalPrice)}`);
+      await navigator.clipboard.writeText(`EGP ${formatWholeMoney(result.finalPrice)}`);
       setCopied(true); setCopyError(false); setTimeout(() => setCopied(false), 2200);
     } catch { setCopied(false); setCopyError(true); }
   }
   const cached = rate?.source === 'cache' || rate?.source === 'offline';
   const cacheForRetry = failedCalculation ? readCachedRate(currency) : null;
-  const currentProvider = rate?.provider ?? activeProviderName();
+  const currentProvider = rate?.provider ?? (currency === 'EGP' ? 'Local' : 'exchangerate.dev');
   return <div className="site-shell">
     <header className="site-header"><div className="brand-lockup">
       <img src={asset} alt={l('logoAlt')} className="brand-logo" />
@@ -157,19 +203,24 @@ export default function App() {
                 <span>{l('provider')}: {providerLabel(language, rate.provider)}</span>
                 <span>{l('pair')}: <bdi dir="ltr">{rate.pair}</bdi></span>
                 <span>{l('rateStatus')}: {l(rate.source === 'network' ? 'fresh' : rate.source === 'identity' ? 'identity' : rate.source === 'cache' ? 'cached' : 'offline')}</span>
-                <span>{l('rateDate')}: {dateText(rate.rateDate, language)}</span>
                 {rate.rateTimestamp && <span>{l('providerUpdated')}: {dateText(rate.rateTimestamp, language)}</span>}
-                {rate.source !== 'identity' && <span>{l('fetched')}: {dateText(rate.fetchedAt, language)}</span>}</div>}
-              {cached && <p className="cache-warning" role="status">
+                {rate.responseTimestamp && <span>{l('responseTime')}: {dateText(rate.responseTimestamp, language)}</span>}
+                {rate.dataUpdatedAt && <span>{l('dataUpdatedAt')}: {dateText(rate.dataUpdatedAt, language)}</span>}
+                {rate.source !== 'identity' && <span>{l('fetched')}: {dateText(rate.fetchedAt, language)}</span>}
+                {rate.marketSession && <span>{l('marketSession')}: {rate.marketSession}</span>}
+                {rate.quoteSource && <span>{l('quoteSource')}: {rate.quoteSource}</span>}
+                {rate.delaySeconds !== null && <span>{l('providerDelay')}: {rate.delaySeconds} {l('seconds')}</span>}
+                {rate.stale !== null && <span>{l('providerStale')}: {l(rate.stale ? 'yes' : 'no')}</span>}</div>}
+              {cached && !rateLimit && <p className="cache-warning" role="status">
                 {l(rate?.source === 'offline' ? 'unavailableSavedRate' : 'savedRate')} {l('verifyRate')}</p>}
+              {rateLimit && <LimitWarning limit={rateLimit} rate={rate} language={language} />}
               {rateError && <p className="rate-error" role="alert">{l(rateError)} <button type="button"
                 onClick={failedCalculation ? () => void performCalculation() : refreshRate}>{l('retry')}</button></p>}
               {cacheForRetry && <button type="button" className="cached-calculate-button"
                 onClick={() => void performCalculation(true)}>{l('calculateCached')}</button>}
-              <p className="rate-note">{l(currentProvider === 'Local' ? 'identityNote' :
-                currentProvider === 'Morningstar' && !rate ? 'morningstarPending' :
-                currentProvider === 'Morningstar' ? 'morningstarNote' :
-                currentProvider === 'Twelve Data' ? 'twelveNote' : 'frankfurterNote')}</p></div>
+              <p className="rate-note">{currentProvider === 'Local' ? l('identityNote') : <>
+                {l('exchangeRateDevNote')} <a href="https://exchangerate.dev/" target="_blank" rel="noreferrer">exchangerate.dev</a>
+              </>}</p></div>
             <button type="submit" className="calculate-button" disabled={loading || calculating}>
               {l(calculating ? 'calculating' : 'calculate')} <ArrowUpRight size={20} /></button>
             <button type="button" className="reset-button" onClick={reset} disabled={calculating}>
@@ -181,18 +232,21 @@ export default function App() {
             <div><div className="section-kicker">{l('estimateKicker')}</div><h2 id="result-heading">{l('breakdownTitle')}</h2></div></div>
           {result ? <>
             <div className="final-block"><div className="final-label">{l('finalUnitPrice')}</div>
-              <div className="final-number"><bdi dir="ltr"><span>EGP</span> {formatMoney(result.finalPrice)}</bdi></div>
+              <div className="final-number"><bdi dir="ltr"><span>EGP</span> {formatWholeMoney(result.finalPrice)}</bdi></div>
               <div className="final-caption">{l('finalCaption')}</div></div>
             <div className="breakdown-list">
-              <Row label={l('originalUnitPrice')}><bdi dir="ltr">{result.currency} {formatMoney(result.original)}</bdi></Row>
+              <Row label={l('originalUnitPrice')}><bdi dir="ltr">{result.currency} {formatExactMoney(result.original)}</bdi></Row>
               <Row label={l('selectedCurrency')}>{currencyName(result.currency, language)} · <bdi dir="ltr">{result.currency}</bdi></Row>
               <Row label={l('exchangeRate')}><bdi dir="ltr">1 {result.currency} = {formatRate(result.rate)} EGP</bdi></Row>
-              <Row label={l('convertedCost')}><bdi dir="ltr">EGP {formatMoney(result.converted)}</bdi></Row>
+              <Row label={l('convertedCost')}><bdi dir="ltr">EGP {formatExactMoney(result.converted)}</bdi></Row>
               <Row label={l('profitMarkup')}><bdi dir="ltr">{result.profitPercent}%</bdi></Row>
-              <Row label={l('profitAmount')}><bdi dir="ltr">EGP {formatMoney(result.profitAmount)}</bdi></Row>
-              <Row label={l('provider')}>{providerLabel(language, result.provider ?? 'Frankfurter')}</Row>
+              <Row label={l('profitAmount')}><bdi dir="ltr">EGP {formatExactMoney(result.profitAmount)}</bdi></Row>
+              <Row label={l('unroundedTotal')}><bdi dir="ltr">EGP {formatExactMoney(result.unroundedFinalPrice ?? result.finalPrice)}</bdi></Row>
+              <Row label={l('rounding')}>{l('nearestFive')}</Row>
+              <Row label={l('provider')}>{providerLabel(language, result.provider ?? 'exchangerate.dev')}</Row>
               <Row label={l('providerRateDate')}>{dateText(result.rateTimestamp ?? result.rateDate, language)}</Row>
               <Row label={l('fetched')}>{dateText(result.fetchedAt, language)}</Row></div>
+            {result.finalPrice === '0' && <p className="result-warning">{l('zeroRounded')}</p>}
             {(result.source === 'offline' || result.source === 'cache') &&
               <p className="result-warning">{l('calculatedSavedRate')} {dateText(result.fetchedAt, language)}.</p>}
             <button type="button" className="copy-button" onClick={copyResult}>
@@ -212,15 +266,13 @@ export default function App() {
         {history.length === 0 ? <div className="history-empty"><Clock3 size={20} /> {l('noCalculations')}</div> :
           <div className="history-list">{history.map((item) => <div className="history-item" key={item.id}>
             <div className="history-currency" dir="ltr">{item.currency}</div>
-            <div className="history-detail"><strong><bdi dir="ltr">{item.currency} {formatMoney(item.original)} + {item.profitPercent}%</bdi></strong>
+            <div className="history-detail"><strong><bdi dir="ltr">{item.currency} {formatExactMoney(item.original)} + {item.profitPercent}%</bdi></strong>
               <small>{dateText(item.createdAt, language)} · {l('rate')} <bdi dir="ltr">{formatRate(item.rate)}</bdi> · {item.rateDate ? `${l('rateDate')} ${dateText(item.rateDate, language)}` : l('identityRate')}</small></div>
-            <div className="history-total"><small>{l('finalPrice')}</small><strong><bdi dir="ltr">EGP {formatMoney(item.finalPrice)}</bdi></strong></div>
+            <div className="history-total"><small>{l('finalPrice')}</small><strong><bdi dir="ltr">EGP {formatWholeMoney(item.finalPrice)}</bdi></strong></div>
           </div>)}</div>}</section>
     </main>
     <footer className="site-footer"><span>© {new Date().getFullYear()} STM · {l('footerBrand')}</span>
       {rate && rate.provider !== 'Local' && <span>{l('footerRates')} <a
-        href={rate.provider === 'Morningstar' ? 'https://www.morningstar.com/' :
-          rate.provider === 'Twelve Data' ? 'https://twelvedata.com/' : 'https://frankfurter.dev/'}
-        target="_blank" rel="noreferrer">{providerLabel(language, rate.provider)}</a></span>}</footer>
+        href="https://exchangerate.dev/" target="_blank" rel="noreferrer">exchangerate.dev</a></span>}</footer>
   </div>;
 }
