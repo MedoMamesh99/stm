@@ -6,11 +6,11 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   for (const [name, width, height] of [['narrow-phone', 320, 700], ['phone', 375, 812], ['desktop', 1440, 900]]) {
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
-    await page.route('https://api.exchangerate.dev/**', async (route) =>
+    await page.route('https://cxrates.com/api/v1/rates?**', async (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        result: 'success', base: 'SAR', timestamp: '2026-11-02T16:58:54Z',
-        effective_at: { EGP: '2026-11-02T16:42:59Z' }, rates: { EGP: 12 },
-        sources: { EGP: 'live' }, stale: { EGP: false }, market_session: 'open',
+        base: 'SAR', fetched_at: '2026-11-02T17:00:00Z',
+        rates: { EGP: { value: '12', source: 'cross:open_er_api+open_er_api',
+          stale: false, as_of: null } },
       }) }));
     await page.goto('http://127.0.0.1:4173/stm/', { waitUntil: 'networkidle' });
     if (await page.locator('.brand-title').textContent() !== 'STM') throw new Error(`${name} brand has extra text`);

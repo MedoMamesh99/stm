@@ -15,10 +15,10 @@ beforeEach(() => {
     if (limited) return { ok: false, status: 429,
       headers: new Headers({ 'Retry-After': '120', 'X-RateLimit-Scope': 'minute' }),
       json: async () => ({ error: { code: 'rate_limited' } }) };
-    return { ok: true, status: 200, headers: new Headers({ 'X-Price-Delay-Seconds': '900' }),
-      json: async () => ({ result: 'success', base: 'SAR', timestamp: '2026-11-02T16:58:54Z',
-        effective_at: { EGP: '2026-11-02T16:42:59Z' }, rates: { EGP: quote },
-        sources: { EGP: 'live' }, stale: { EGP: false }, market_session: 'open' }) };
+    return { ok: true, status: 200, headers: new Headers(),
+      json: async () => ({ base: 'SAR', fetched_at: '2026-11-02T17:00:00Z',
+        rates: { EGP: { value: String(quote), source: 'cross:open_er_api+open_er_api',
+          stale: false, as_of: null } } }) };
   }));
   Element.prototype.scrollIntoView = vi.fn();
 });
@@ -52,7 +52,7 @@ it('starts with SAR and fetches a fresh rate for every calculation', async () =>
   await waitFor(() => expect(screen.getByText('1 SAR = 12 EGP')).toBeInTheDocument());
   expect([...document.querySelectorAll('.rate-meta > span')].map((item) =>
     item.textContent?.split(':')[0])).toEqual(['Provider', 'Updated', 'Pair']);
-  expect(screen.getByText(/Provider: exchangerate.dev/)).toBeInTheDocument();
+  expect(screen.getByText(/Provider: CxRates/)).toBeInTheDocument();
   expect(document.querySelector('.rate-meta')?.textContent).toContain('Pair: SAR/EGP');
   expect(fetch).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
@@ -121,7 +121,7 @@ it('switches currency and uses the EGP identity rate without another request', a
   await user.click(within(dialog).getByRole('button', { name: /EGP Egyptian Pound/i }));
   await waitFor(() => expect(screen.getByText('1 EGP = 1 EGP')).toBeInTheDocument());
   expect(screen.getByText('EGP converts to itself at exactly 1. No rate provider is contacted.')).toBeInTheDocument();
-  expect(within(screen.getByRole('contentinfo')).queryByText('exchangerate.dev')).not.toBeInTheDocument();
+  expect(within(screen.getByRole('contentinfo')).queryByText('CxRates')).not.toBeInTheDocument();
   await user.type(screen.getByLabelText('Unit Price'), '100');
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
   await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('100'));
