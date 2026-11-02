@@ -14,6 +14,8 @@ export type Calculation = {
   profitAmount: string;
   finalPrice: string;
   rateDate: string | null;
+  rateTimestamp?: string | null;
+  provider?: string;
   fetchedAt: string;
   source: 'network' | 'cache' | 'offline' | 'identity';
 };
@@ -30,18 +32,20 @@ export function parseInput(value: string, label: string): Decimal {
   return new Decimal(trimmed);
 }
 
-export function validatePrice(value: string): string | null {
-  try {
-    if (parseInput(value, 'unit price').lte(0)) return 'Unit price must be greater than zero.';
-    return null;
-  } catch (error) { return (error as Error).message; }
+export function validatePrice(value: string): 'priceInvalid' | 'priceNonpositive' | 'priceTooLarge' | null {
+  const trimmed = value.trim();
+  if (!decimalPattern.test(trimmed)) return 'priceInvalid';
+  const [whole, fraction = ''] = trimmed.split('.');
+  if (whole.length > 18 || fraction.length > 12) return 'priceTooLarge';
+  return new Decimal(trimmed).lte(0) ? 'priceNonpositive' : null;
 }
 
-export function validateProfit(value: string): string | null {
-  try {
-    if (parseInput(value, 'profit percentage').gt(1000)) return 'Profit must be between 0% and 1000%.';
-    return null;
-  } catch (error) { return (error as Error).message; }
+export function validateProfit(value: string): 'profitInvalid' | 'profitTooLarge' | null {
+  const trimmed = value.trim();
+  if (!decimalPattern.test(trimmed)) return 'profitInvalid';
+  const [whole, fraction = ''] = trimmed.split('.');
+  if (whole.length > 18 || fraction.length > 12 || new Decimal(trimmed).gt(1000)) return 'profitTooLarge';
+  return null;
 }
 
 export function calculate(
@@ -52,6 +56,8 @@ export function calculate(
   rateDate: string | null,
   fetchedAt: string,
   source: Calculation['source'],
+  provider = 'Frankfurter',
+  rateTimestamp: string | null = null,
 ): Calculation {
   const priceError = validatePrice(price);
   const profitError = validateProfit(profit);
@@ -68,7 +74,7 @@ export function calculate(
     original: original.toString(), rate: exchange.toString(),
     profitPercent: percentage.toString(), converted: converted.toString(),
     profitAmount: profitAmount.toString(), finalPrice: converted.plus(profitAmount).toString(),
-    rateDate, fetchedAt, source,
+    rateDate, rateTimestamp, provider, fetchedAt, source,
   };
 }
 

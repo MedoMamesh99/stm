@@ -25,11 +25,14 @@ describe('exchange rate service', () => {
     await getExchangeRate('USD', { force: true });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
-  it('falls back to cache on network failure', async () => {
+  it('only falls back to cache when explicitly permitted', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => response } as Response);
     await getExchangeRate('USD');
     vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'));
     expect((await getExchangeRate('USD', { force: true })).source).toBe('offline');
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'));
+    await expect(getExchangeRate('USD', { force: true, allowCachedFallback: false }))
+      .rejects.toMatchObject({ key: 'rateUnavailableError' });
   });
   it('refreshes an expired cached rate', async () => {
     localStorage.setItem('stm-rate-v1-USD-EGP', JSON.stringify({
@@ -42,6 +45,6 @@ describe('exchange rate service', () => {
   });
   it('blocks when no cache exists', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('offline'));
-    await expect(getExchangeRate('USD')).rejects.toThrow('No rate is available');
+    await expect(getExchangeRate('USD')).rejects.toMatchObject({ key: 'rateUnavailableError' });
   });
 });

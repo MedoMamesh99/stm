@@ -10,5 +10,14 @@ export const currencies = [
 export type CurrencyCode = (typeof currencies)[number][0];
 export const isCurrency = (value: string): value is CurrencyCode =>
   currencies.some(([code]) => code === value);
-export const currencyName = (code: CurrencyCode) =>
-  currencies.find(([candidate]) => candidate === code)?.[1] ?? code;
+const arabicNames: Record<CurrencyCode, string> = {
+  EGP: 'الجنيه المصري', USD: 'الدولار الأمريكي', EUR: 'اليورو',
+  GBP: 'الجنيه الإسترليني', SAR: 'الريال السعودي', AED: 'الدرهم الإماراتي',
+  KWD: 'الدينار الكويتي', QAR: 'الريال القطري', BHD: 'الدينار البحريني',
+  OMR: 'الريال العُماني', JPY: 'الين الياباني', CNY: 'اليوان الصيني',
+  TRY: 'الليرة التركية', CHF: 'الفرنك السويسري', CAD: 'الدولار الكندي',
+  AUD: 'الدولار الأسترالي',
+};
+export const currencyName = (code: CurrencyCode, language: 'en' | 'ar' = 'en') =>
+  language === 'ar' ? arabicNames[code] :
+    currencies.find(([candidate]) => candidate === code)?.[1] ?? code;

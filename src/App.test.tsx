@@ -3,40 +3,86 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import App from './App';
 
-const response = { date: '2026-11-02', base: 'USD', quote: 'EGP', rate: 50 };
-
+let quote = 12;
+let fail = false;
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => response }));
-  vi.stubGlobal('scrollTo', vi.fn());
+  localStorage.clear();
+  quote = 12; fail = false;
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url: string, options: RequestInit) => {
+    expect(options.cache).toBe('no-store');
+    if (fail) throw new Error('offline');
+    return { ok: true, json: async () => ({ date: '2026-11-02', base: 'SAR', quote: 'EGP', rate: quote }) };
+  }));
   Element.prototype.scrollIntoView = vi.fn();
 });
 
-it('validates, calculates, invalidates results, and resets', async () => {
+it('starts with SAR and fetches a fresh rate for every calculation', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await waitFor(() => expect(screen.getByText('1 USD = 50.0000 EGP')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('1 SAR = 12.0000 EGP')).toBeInTheDocument());
+  expect(fetch).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
   expect(screen.getByText('Enter a valid unit price.')).toBeInTheDocument();
   await user.type(screen.getByLabelText('Unit Price'), '100');
   await user.clear(screen.getByLabelText('Profit %'));
   await user.type(screen.getByLabelText('Profit %'), '30');
+  quote = 13;
   await user.click(screen.getByRole('button', { name: /calculate final price/i }));
-  await waitFor(() => expect(screen.getByText('6,500.00')).toBeInTheDocument());
-  expect(screen.getByText('EGP 6,500.00')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Copy Result' }));
-  expect(await navigator.clipboard.readText()).toBe('EGP 6,500.00');
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,690.00'));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  quote = 14;
+  await user.click(screen.getByRole('button', { name: /calculate final price/i }));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,820.00'));
+  expect(fetch).toHaveBeenCalledTimes(3);
   fireEvent.change(screen.getByLabelText('Unit Price'), { target: { value: '101' } });
-  expect(screen.queryByText('6,500.00')).not.toBeInTheDocument();
+  expect(document.querySelector('.final-number')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: /reset fields/i }));
   expect(screen.getByLabelText('Unit Price')).toHaveValue('');
 });
 
-it('switches currency and shows EGP identity rate', async () => {
+it('blocks stale calculation after failure and offers an explicit saved-rate choice', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await user.click(screen.getByRole('button', { name: /currency: usd/i }));
+  await waitFor(() => expect(screen.getByText('1 SAR = 12.0000 EGP')).toBeInTheDocument());
+  await user.type(screen.getByLabelText('Unit Price'), '100');
+  fail = true;
+  await user.click(screen.getByRole('button', { name: /calculate final price/i }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Calculate Using Cached Rate' })).toBeInTheDocument());
+  expect(document.querySelector('.final-number')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Calculate Using Cached Rate' }));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('1,200.00'));
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('switches to Arabic RTL and remembers only the language and theme preferences', async () => {
+  const user = userEvent.setup();
+  const view = render(<App />);
+  await user.click(screen.getByRole('button', { name: 'العربية' }));
+  expect(document.documentElement).toHaveAttribute('dir', 'rtl');
+  expect(document.documentElement).toHaveAttribute('lang', 'ar');
+  expect(screen.getByLabelText('سعر الوحدة')).toBeInTheDocument();
+  expect(localStorage.getItem('stm-language')).toBe('ar');
+  expect(document.title).toContain('حاسبة العملات');
+  view.unmount();
+  render(<App />);
+  expect(screen.getByLabelText('سعر الوحدة')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /العملة: SAR/i })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'English' }));
+  expect(document.documentElement).toHaveAttribute('dir', 'ltr');
+  expect(screen.getByLabelText('Unit Price')).toBeInTheDocument();
+});
+
+it('switches currency and uses the EGP identity rate without another request', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await waitFor(() => expect(screen.getByText('1 SAR = 12.0000 EGP')).toBeInTheDocument());
+  await user.click(screen.getByRole('button', { name: /currency: sar/i }));
   const dialog = screen.getByRole('dialog', { name: /choose currency/i });
   await user.type(within(dialog).getByRole('searchbox'), 'Egyptian');
   await user.click(within(dialog).getByRole('button', { name: /EGP Egyptian Pound/i }));
   await waitFor(() => expect(screen.getByText('1 EGP = 1.0000 EGP')).toBeInTheDocument());
+  await user.type(screen.getByLabelText('Unit Price'), '100');
+  await user.click(screen.getByRole('button', { name: /calculate final price/i }));
+  await waitFor(() => expect(document.querySelector('.final-number')?.textContent).toContain('100.00'));
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

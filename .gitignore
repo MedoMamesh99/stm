@@ -8,6 +8,8 @@ build/
 coverage/
 .vite/
 *.tsbuildinfo
+.build-tmp/
+.qa/
 
 # Environment and secrets
 .env
